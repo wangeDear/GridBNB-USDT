@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     INITIAL_PARAMS_JSON: Dict[str, Dict[str, float]] = {}
 
     INITIAL_GRID: float = 2.0  # 全局默认网格大小
-    MIN_TRADE_AMOUNT: float = 20.0
+    MIN_TRADE_AMOUNT: float = 6.0  # 降低最小交易金额以支持小额账户
 
     # --- 初始状态设置 (从 .env 读取) ---
     INITIAL_PRINCIPAL: float = 0.0

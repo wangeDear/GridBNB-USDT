@@ -29,11 +29,23 @@ class AdvancedRiskManager:
 
             # 只在仓位比例变化超过0.1%时打印日志
             if abs(position_ratio - self.last_position_ratio) > 0.001:
+                # 增强的风控日志
+                total_assets = await self.trader._get_pair_specific_assets_value()
+                position_value = await self._get_position_value(spot_balance, funding_balance)
+                quote_balance = (
+                    float(spot_balance.get('free', {}).get(self.trader.quote_asset, 0)) +
+                    float(funding_balance.get(self.trader.quote_asset, 0))
+                )
+                
+                risk_level = "🟢 安全" if 0.2 <= position_ratio <= 0.8 else "🟡 警告" if 0.1 <= position_ratio < 0.2 or 0.8 < position_ratio <= 0.9 else "🔴 危险"
+                
                 self.logger.info(
-                    f"风控检查 | "
-                    f"当前仓位比例: {position_ratio:.2%} | "
-                    f"最大允许比例: {settings.MAX_POSITION_RATIO:.2%} | "
-                    f"最小底仓比例: {settings.MIN_POSITION_RATIO:.2%}"
+                    f"📊 【风控检查】{risk_level} | "
+                    f"仓位比例: {position_ratio:.2%} | "
+                    f"总资产: {total_assets:.2f} {self.trader.quote_asset} | "
+                    f"持仓价值: {position_value:.2f} {self.trader.quote_asset} | "
+                    f"现金余额: {quote_balance:.2f} {self.trader.quote_asset} | "
+                    f"允许范围: {settings.MIN_POSITION_RATIO:.1%}-{settings.MAX_POSITION_RATIO:.1%}"
                 )
                 self.last_position_ratio = position_ratio
 
@@ -41,7 +53,10 @@ class AdvancedRiskManager:
             if position_ratio > settings.MAX_POSITION_RATIO:
                 # 只有在没打印过日志时才打印
                 if not self._max_limit_warning_logged:
-                    self.logger.warning(f"仓位超限 ({position_ratio:.2%})，暂停新的买入操作。")
+                    self.logger.warning(
+                        f"⚠️ 【仓位超限】当前: {position_ratio:.2%} > 限制: {settings.MAX_POSITION_RATIO:.1%}，"
+                        f"暂停新的买入操作，建议适度卖出。"
+                    )
                     self._max_limit_warning_logged = True  # 标记为已打印
 
                 # 无论是否打印日志，都要重置另一个标记
@@ -52,7 +67,10 @@ class AdvancedRiskManager:
             elif position_ratio < settings.MIN_POSITION_RATIO:
                 # 只有在没打印过日志时才打印
                 if not self._min_limit_warning_logged:
-                    self.logger.warning(f"底仓保护触发 ({position_ratio:.2%})，暂停新的卖出操作。")
+                    self.logger.warning(
+                        f"⚠️ 【底仓保护】当前: {position_ratio:.2%} < 限制: {settings.MIN_POSITION_RATIO:.1%}，"
+                        f"暂停新的卖出操作，建议适度买入。"
+                    )
                     self._min_limit_warning_logged = True  # 标记为已打印
 
                 # 无论是否打印日志，都要重置另一个标记
@@ -63,7 +81,10 @@ class AdvancedRiskManager:
             else:
                 # 如果之前有警告，现在恢复正常了，就打印一条恢复信息
                 if self._min_limit_warning_logged or self._max_limit_warning_logged:
-                    self.logger.info(f"仓位已恢复至正常范围 ({position_ratio:.2%})。")
+                    self.logger.info(
+                        f"✅ 【风控恢复】仓位已恢复至正常范围 ({position_ratio:.2%})，"
+                        f"允许所有交易操作。"
+                    )
 
                 # 将所有日志标记重置为False
                 self._min_limit_warning_logged = False
