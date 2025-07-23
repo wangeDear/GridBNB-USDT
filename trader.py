@@ -1481,7 +1481,9 @@ class GridTrader:
 
         # 使用ccxt的精度调整方法
         try:
-            return self.exchange.exchange.amount_to_precision(self.symbol, amount)
+            result = self.exchange.exchange.amount_to_precision(self.symbol, amount)
+            # ccxt的precision方法可能返回字符串，确保返回浮点数
+            return float(result) if isinstance(result, str) else result
         except Exception as e:
             self.logger.error(f"精度调整失败: {e}, 使用默认精度")
             return float(f"{amount:.{self.amount_precision}f}")
@@ -1495,7 +1497,9 @@ class GridTrader:
 
         # 使用ccxt的精度调整方法
         try:
-            return self.exchange.exchange.price_to_precision(self.symbol, price)
+            result = self.exchange.exchange.price_to_precision(self.symbol, price)
+            # ccxt的precision方法可能返回字符串，确保返回浮点数
+            return float(result) if isinstance(result, str) else result
         except Exception as e:
             self.logger.error(f"价格精度调整失败: {e}, 使用默认精度")
             return float(f"{price:.{self.price_precision}f}")

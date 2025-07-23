@@ -90,7 +90,9 @@ class PositionControllerS1:
             # 1. 精度调整 (复用 trader 中的方法，如果存在且安全)
             # 假设 trader 中有 _adjust_amount_precision 方法
             if hasattr(self.trader, '_adjust_amount_precision') and callable(self.trader._adjust_amount_precision):
-                adjusted_amount = self.trader._adjust_amount_precision(amount_base_asset)
+                raw_adjusted_amount = self.trader._adjust_amount_precision(amount_base_asset)
+                # 确保结果是数字类型，因为ccxt的precision方法可能返回字符串
+                adjusted_amount = float(raw_adjusted_amount) if isinstance(raw_adjusted_amount, str) else raw_adjusted_amount
             else:
                 # 如果没有，提供一个基础实现 (根据需要调整精度)
                 precision = 3 
