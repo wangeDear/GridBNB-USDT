@@ -241,8 +241,20 @@ class GridTrader:
 
             # 从市场信息中获取精度
             if self.symbol_info and 'precision' in self.symbol_info:
-                self.amount_precision = self.symbol_info['precision'].get('amount')
-                self.price_precision = self.symbol_info['precision'].get('price')
+                # 确保精度值是整数类型，防止字符串导致的格式化错误
+                raw_amount_precision = self.symbol_info['precision'].get('amount')
+                raw_price_precision = self.symbol_info['precision'].get('price')
+                
+                try:
+                    self.amount_precision = int(raw_amount_precision) if raw_amount_precision is not None else 6
+                except (ValueError, TypeError):
+                    self.amount_precision = 6
+                    
+                try:
+                    self.price_precision = int(raw_price_precision) if raw_price_precision is not None else 2
+                except (ValueError, TypeError):
+                    self.price_precision = 2
+                    
                 self.logger.info(f"交易对精度: 数量 {self.amount_precision}, 价格 {self.price_precision}")
             else:
                 self.logger.warning("无法获取交易对精度信息，将使用默认值")

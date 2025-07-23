@@ -61,7 +61,13 @@ class ExchangeClient:
     def _format_savings_amount(self, asset: str, amount: float) -> str:
         """根据配置格式化理财产品的操作金额"""
         # 从配置中获取该资产的理财精度，如果未指定，则使用默认精度
-        precision = settings.SAVINGS_PRECISIONS.get(asset, settings.SAVINGS_PRECISIONS['DEFAULT'])
+        raw_precision = settings.SAVINGS_PRECISIONS.get(asset, settings.SAVINGS_PRECISIONS['DEFAULT'])
+        
+        # 确保精度值是整数类型，防止字符串导致的格式化错误
+        try:
+            precision = int(raw_precision) if raw_precision is not None else 8
+        except (ValueError, TypeError):
+            precision = 8
 
         # 使用 f-string 和获取到的精度来格式化
         return f"{float(amount):.{precision}f}"
