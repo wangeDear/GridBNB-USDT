@@ -151,9 +151,14 @@ class PositionControllerS1:
                         return False
                     
             elif side == 'SELL':
-                # 检查base_asset余额是否足够
-                if adjusted_amount > await self.trader.get_available_balance(self.trader.base_asset):
-                    self.logger.warning(f"S1: {self.trader.base_asset}余额不足，无法执行卖出操作")
+                # 检查base_asset余额是否足够 - 直接使用现货账户余额，不应用安全系数
+                spot_balance = await self.trader.exchange.fetch_balance({'type': 'spot'})
+                available_balance = float(spot_balance.get('free', {}).get(self.trader.base_asset, 0))
+                
+                self.logger.info(f"S1: 卖出前余额检查 | 需要: {adjusted_amount:.8f} {self.trader.base_asset} | 实际可用: {available_balance:.8f}")
+                
+                if adjusted_amount > available_balance:
+                    self.logger.warning(f"S1: {self.trader.base_asset}余额不足，无法执行卖出操作。需要: {adjusted_amount:.8f}, 可用: {available_balance:.8f}")
                     return False
 
             self.logger.info(f"S1: Placing {side} order for {adjusted_amount:.8f} {self.trader.base_asset} at market price (approx {current_price})...")
@@ -279,20 +284,26 @@ class PositionControllerS1:
 
         # 高点检查
         if current_price > self.s1_daily_high and position_pct > self.s1_sell_target_pct:
-            s1_action = 'SELL'
-            target_position_value = total_assets * self.s1_sell_target_pct
-            sell_value_needed = position_value - target_position_value
-            # 确保不会卖出负数或零 (以防万一)
-            if sell_value_needed > 0:
-                available_balance = await self.check_s1_balance_and_transfer(sell_value_needed / current_price, self.trader.base_asset)
-                if available_balance > 0:
-                    s1_trade_amount_base_asset = min(sell_value_needed / current_price, available_balance)
-                    self.logger.info(f"S1: High level breached. Need to SELL {s1_trade_amount_base_asset:.8f} {self.trader.base_asset} to reach {self.s1_sell_target_pct*100:.0f}% target.")
-                else:
-                    self.logger.warning(f"S1: Insufficient {self.trader.base_asset} balance for sell adjustment. Available: {available_balance:.8f} {self.trader.base_asset}")
-                    s1_action = 'NONE'
+            # 额外检查：确保卖出后不会违反底仓保护
+            target_position_ratio = self.s1_sell_target_pct
+            if target_position_ratio < 0.1:  # 如果目标仓位低于10%，不执行卖出
+                self.logger.warning(f"S1: 卖出信号触发，但目标仓位({target_position_ratio:.1%})将低于底仓保护限制(10%)，跳过卖出")
+                s1_action = 'NONE'
             else:
-                s1_action = 'NONE' # 重置，因为计算结果无效
+                s1_action = 'SELL'
+                target_position_value = total_assets * self.s1_sell_target_pct
+                sell_value_needed = position_value - target_position_value
+                # 确保不会卖出负数或零 (以防万一)
+                if sell_value_needed > 0:
+                    available_balance = await self.check_s1_balance_and_transfer(sell_value_needed / current_price, self.trader.base_asset)
+                    if available_balance > 0:
+                        s1_trade_amount_base_asset = min(sell_value_needed / current_price, available_balance)
+                        self.logger.info(f"S1: High level breached. Need to SELL {s1_trade_amount_base_asset:.8f} {self.trader.base_asset} to reach {self.s1_sell_target_pct*100:.0f}% target.")
+                    else:
+                        self.logger.warning(f"S1: Insufficient {self.trader.base_asset} balance for sell adjustment. Available: {available_balance:.8f} {self.trader.base_asset}")
+                        s1_action = 'NONE'
+                else:
+                    s1_action = 'NONE' # 重置，因为计算结果无效
 
         # 低点检查 (用 elif 避免同时触发)
         elif current_price < self.s1_daily_low and position_pct < self.s1_buy_target_pct:
@@ -309,8 +320,10 @@ class PositionControllerS1:
         # 3. 如果触发，并且风控允许，才执行 S1 调仓
         if s1_action == 'SELL' and risk_state != RiskState.ALLOW_BUY_ONLY:
             if s1_trade_amount_base_asset > 1e-9:
-                self.logger.info(f"S1: Condition met for SELL adjustment.")
+                self.logger.info(f"S1: Condition met for SELL adjustment. Risk state: {risk_state.name}")
                 await self._execute_s1_adjustment('SELL', s1_trade_amount_base_asset)
+        elif s1_action == 'SELL':
+            self.logger.warning(f"S1: SELL signal detected but blocked by risk control (state: {risk_state.name}). Current position: {position_pct:.2%}")
         elif s1_action == 'BUY' and risk_state != RiskState.ALLOW_SELL_ONLY:
             if s1_trade_amount_base_asset > 1e-9:
                 self.logger.info(f"S1: Condition met for BUY adjustment.")
