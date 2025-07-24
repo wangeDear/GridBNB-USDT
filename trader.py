@@ -259,8 +259,8 @@ class GridTrader:
             else:
                 self.logger.warning("无法获取交易对精度信息，将使用默认值")
                 # 使用动态默认精度，而不是硬编码BNB/USDT精度
-                self.amount_precision = 6  # 通用默认精度
-                self.price_precision = 2   # 通用默认精度
+                self.amount_precision = 8  # 通用默认精度
+                self.price_precision = 8   # 通用默认精度
 
             # 设置基准价：优先使用加载的状态，然后是交易对特定配置，最后是实时价格
             if self.base_price is None or self.base_price == 0:
@@ -509,7 +509,7 @@ class GridTrader:
             total_assets = await self._get_pair_specific_assets_value()
 
             # 计算目标金额
-            target_ratio = 0.5  # 默认目标比例为50%
+            target_ratio = 0.2  # 默认目标比例为50%
             amount = total_assets * target_ratio
 
             # 只在金额变化超过1%时记录日志
