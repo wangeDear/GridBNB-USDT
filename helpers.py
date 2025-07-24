@@ -60,9 +60,16 @@ def send_pushplus_message(content, title="交易信号通知", timeout=settings.
         "content": content,
         "template": "txt"  # 使用文本模板
     }
+
+    proxy = os.getenv('HTTP_PROXY', '')
+    proxies = {
+        "http": proxy,
+        "https": proxy
+    } if proxy else None
+
     try:
         logging.info(f"正在发送推送通知: {title}")
-        response = requests.post(url, data=data, timeout=timeout)
+        response = requests.post(url, data=data, timeout=timeout, proxies=proxies)
         response_json = response.json()
         
         if response.status_code == 200 and response_json.get('code') == 200:

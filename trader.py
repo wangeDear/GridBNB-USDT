@@ -508,45 +508,19 @@ class GridTrader:
 
             total_assets = await self._get_pair_specific_assets_value()
 
-            # 小额交易优化策略
-            if total_assets <= 100:  # 小额账户 (≤100 USDT)
-                # 使用更大的比例以提高交易活跃度
-                target_ratio = 0.15  # 15%
-                min_amount = max(settings.MIN_TRADE_AMOUNT, total_assets * 0.1)  # 至少10%
-                max_amount = total_assets * 0.25  # 最多25%
-            elif total_assets <= 500:  # 中小额账户 (100-500 USDT)  
-                target_ratio = 0.12  # 12%
-                min_amount = settings.MIN_TRADE_AMOUNT
-                max_amount = total_assets * 0.2  # 最多20%
-            else:  # 大额账户 (>500 USDT)
-                target_ratio = 0.1   # 10%
-                min_amount = settings.MIN_TRADE_AMOUNT
-                max_amount = total_assets * 0.15  # 最多15%
-
             # 计算目标金额
+            target_ratio = 0.5  # 默认目标比例为50%
             amount = total_assets * target_ratio
-            
-            # 确保在合理范围内
-            amount = max(min_amount, min(amount, max_amount))
-            
-            # 特殊处理：如果是40 USDT这种极小额度，允许更灵活的交易
-            if total_assets < 50:
-                # 确保至少能做一次有意义的交易
-                amount = max(amount, 8.0)  # 最少8 USDT一单
-                # 但不超过总资产的30%
-                amount = min(amount, total_assets * 0.3)
 
             # 只在金额变化超过1%时记录日志
             if not hasattr(self, f'{cache_key}_last') or \
                     abs(amount - getattr(self, f'{cache_key}_last', 0)) / max(getattr(self, f'{cache_key}_last', 0.01),
                                                                               0.01) > 0.01:
-                account_type = "小额" if total_assets <= 100 else "中额" if total_assets <= 500 else "大额"
                 self.logger.info(
-                    f"💰 订单金额计算 ({account_type}账户) | "
+                    f"💰 订单金额计算 | "
                     f"总资产: {total_assets:.2f} {self.quote_asset} | "
                     f"目标比例: {target_ratio:.1%} | "
                     f"计算金额: {amount:.2f} {self.quote_asset} | "
-                    f"允许范围: {min_amount:.1f}-{max_amount:.1f}"
                 )
                 setattr(self, f'{cache_key}_last', amount)
 
@@ -558,11 +532,8 @@ class GridTrader:
 
         except Exception as e:
             self.logger.error(f"计算目标订单金额失败: {str(e)}")
-            # 小额账户的保守回退策略
-            total_assets = await self._get_pair_specific_assets_value()
-            if total_assets < 50:
-                return max(8.0, total_assets * 0.2)  # 至少8 USDT或20%资产
-            return getattr(self, cache_key, settings.MIN_TRADE_AMOUNT)
+            # 返回一个合理的默认值或上次缓存值，避免返回0导致后续计算错误
+            return getattr(self, cache_key, 0)  # 如果缓存存在则返回缓存，否则返回
 
     async def get_available_balance(self, currency):
         balance = await self.exchange.fetch_balance({'type': 'spot'})
@@ -1250,7 +1221,7 @@ class GridTrader:
                         continue
 
     async def adjust_grid_size(self):
-        """根据【平滑后】的波动率和市场趋势调整网格大小 - 小额交易优化"""
+        """根据【平滑后】的波动率和市场趋势调整网格大小"""
         try:
             # 1. 计算当前的瞬时波动率
             current_volatility = await self._calculate_volatility()
@@ -1267,77 +1238,50 @@ class GridTrader:
             # 3. 计算平滑后的波动率（移动平均值）
             # 只有当历史记录足够长时才开始计算，以保证平均值的有效性
             if len(self.volatility_history) < self.volatility_smoothing_window:
-                self.logger.info(f"正在收集波动率数据 ({len(self.volatility_history)}/{self.volatility_smoothing_window})... 瞬时值: {current_volatility:.4f}")
+                self.logger.info(
+                    f"正在收集波动率数据 ({len(self.volatility_history)}/{self.volatility_smoothing_window})... 瞬时值: {current_volatility:.4f}")
                 return  # 数据不足，暂时不调整
 
             smoothed_volatility = sum(self.volatility_history) / len(self.volatility_history)
 
-            # 获取当前资产规模以调整策略
-            total_assets = await self._get_pair_specific_assets_value()
-            
-            self.logger.info(f"波动率分析 | 瞬时值: {current_volatility:.4f} | 平滑后({self.volatility_smoothing_window}次平均): {smoothed_volatility:.4f} | 资产规模: {total_assets:.1f} {self.quote_asset}")
+            self.logger.info(
+                f"波动率分析 | 瞬时值: {current_volatility:.4f} | 平滑后({self.volatility_smoothing_window}次平均): {smoothed_volatility:.4f}")
 
             # 4. 【关键】使用平滑后的波动率来决定网格大小
             volatility_for_decision = smoothed_volatility
 
-            # ========== 小额账户优化的网格计算 ==========
-            if total_assets < 100:  # 小额账户
-                # 使用更激进的网格策略以提高收益机会
-                params = {
-                    'base_grid': 3.0,          # 提高基础网格到3%
-                    'center_volatility': 0.20, # 降低中心波动率
-                    'sensitivity_k': 12.0      # 提高灵敏度
-                }
-                min_grid = 2.0  # 小额账户最小网格2%
-                max_grid = 5.0  # 最大网格5%
-                self.logger.debug("使用小额账户网格策略")
-            elif total_assets < 500:  # 中额账户
-                params = {
-                    'base_grid': 2.8,
-                    'center_volatility': 0.22,
-                    'sensitivity_k': 11.0
-                }
-                min_grid = 1.5
-                max_grid = 4.5
-                self.logger.debug("使用中额账户网格策略")
-            else:  # 大额账户使用原策略
-                params = TradingConfig.GRID_CONTINUOUS_PARAMS
-                min_grid = TradingConfig.GRID_PARAMS['min']
-                max_grid = TradingConfig.GRID_PARAMS['max']
-
-            # 5. 应用连续函数计算新网格大小
+            # ========== 使用连续函数计算新网格大小 ==========
+            # 1. 从配置中获取连续调整的参数
+            params = TradingConfig.GRID_CONTINUOUS_PARAMS
             base_grid = params['base_grid']
             center_volatility = params['center_volatility']
             sensitivity_k = params['sensitivity_k']
 
+            # 2. 应用线性函数公式
             # 公式: 新网格 = 基础网格 + k * (当前平滑波动率 - 波动率中心点)
             new_grid = base_grid + sensitivity_k * (volatility_for_decision - center_volatility)
 
-            account_type = "小额" if total_assets < 100 else "中额" if total_assets < 500 else "大额"
             self.logger.info(
-                f"连续网格计算 ({account_type}) | "
+                f"连续网格计算 | "
                 f"波动率: {volatility_for_decision:.2%} | "
                 f"计算公式: {base_grid:.2f}% + {sensitivity_k} * ({volatility_for_decision:.2%} - {center_volatility:.2%}) = {new_grid:.2f}%"
             )
 
             # 确保网格在允许范围内
-            new_grid = max(min_grid, min(new_grid, max_grid))
+            new_grid = max(min(new_grid, TradingConfig.GRID_PARAMS['max']), TradingConfig.GRID_PARAMS['min'])
 
             # 只有在变化大于0.01%时才更新，避免频繁的微小调整
             if abs(new_grid - self.grid_size) > 0.01:
-                old_grid = self.grid_size
                 self.logger.info(
-                    f"🔄 调整网格大小 ({account_type}账户) | "
-                    f"平滑波动率: {volatility_for_decision:.2%} | "
-                    f"原网格: {old_grid:.2f}% → 新网格: {new_grid:.2f}% | "
-                    f"变化: {((new_grid - old_grid) / old_grid * 100):+.1f}%"
+                    f"调整网格大小 | "
+                    f"平滑波动率: {volatility_for_decision:.2%} | "  # 日志中体现是平滑值
+                    f"原网格: {self.grid_size:.2f}% | "
+                    f"新网格 (限定范围后): {new_grid:.2f}%"
                 )
                 self.grid_size = new_grid
                 self.last_grid_adjust_time = time.time()  # 更新时间
                 # 保存状态
                 self._save_state()
-            else:
-                self.logger.debug(f"网格变化过小 ({abs(new_grid - self.grid_size):.3f}%)，保持当前设置")
 
         except Exception as e:
             self.logger.error(f"调整网格大小失败: {str(e)}")
@@ -1666,15 +1610,11 @@ class GridTrader:
                 return
 
             # 小额账户优化策略
-            if total_assets < 100:  # 小额账户
+            if total_assets < 500:  # 小额账户
                 target_ratio = 0.4  # 保留40%在现货用于交易
                 min_transfer_usdt = 0.5  # 降低USDT最小转移金额
                 min_transfer_bnb = 0.001  # 降低BNB最小转移金额
                 self.logger.debug(f"使用小额账户策略：保留{target_ratio:.1%}在现货")
-            elif total_assets < 500:  # 中小额账户
-                target_ratio = 0.25  # 保留25%在现货
-                min_transfer_usdt = 1.0
-                min_transfer_bnb = 0.01
             else:  # 大额账户使用原策略
                 target_ratio = 0.16  # 保留16%在现货
                 min_transfer_usdt = 1.0
@@ -1811,15 +1751,11 @@ class GridTrader:
             current_price = await self._get_latest_price()
 
             # 小额账户优化策略
-            if total_assets < 100:  # 小额账户
+            if total_assets < 500:  # 小额账户
                 target_ratio = 0.4  # 保留40%在现货
                 min_transfer_usdt = 0.5  # 降低转移门槛
                 min_transfer_bnb = 0.001
                 self.logger.info(f"🔍 小额账户策略：保留{target_ratio:.1%}在现货用于交易")
-            elif total_assets < 500:  # 中小额账户
-                target_ratio = 0.25  # 保留25%在现货
-                min_transfer_usdt = 1.0
-                min_transfer_bnb = 0.01
             else:  # 大额账户
                 target_ratio = 0.16  # 保留16%在现货
                 min_transfer_usdt = 1.0
