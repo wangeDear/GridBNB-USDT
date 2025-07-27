@@ -5,6 +5,7 @@ from config import settings
 from datetime import datetime
 import time
 import asyncio
+from helpers import send_pushplus_message
 
 class ExchangeClient:
     def __init__(self):
@@ -55,7 +56,10 @@ class ExchangeClient:
 
         # 【新增】用于管理后台时间同步任务
         self.time_sync_task = None
-    
+
+        # 【新增】告警控制 - 避免短时间内重复发送相同告警
+        self.alert_cache = {}
+        self.alert_cache_ttl = 3600  # 1小时内不重复发送相同类型的告警
 
 
     def _format_savings_amount(self, asset: str, amount: float) -> str:
@@ -135,6 +139,13 @@ class ExchangeClient:
         except Exception as e:
             self.logger.error(f"加载市场数据失败: {str(e)}")
             self.markets_loaded = False
+            
+            # 发送告警
+            self._send_alert(
+                alert_type="load_markets_error",
+                title="🚨 交易所连接失败",
+                content=f"❌ 加载市场数据失败\n\n错误信息：{str(e)}\n时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n请检查网络连接和API配置"
+            )
             raise
 
     async def fetch_ohlcv(self, symbol, timeframe='1h', limit=None):
@@ -161,6 +172,13 @@ class ExchangeClient:
         except Exception as e:
             self.logger.error(f"获取行情失败: {str(e)}")
             self.logger.debug(f"请求参数: symbol={symbol}")
+            
+            # 发送告警（行情获取失败是比较严重的问题）
+            self._send_alert(
+                alert_type="fetch_ticker_error",
+                title="⚠️ 行情数据获取失败",
+                content=f"📊 无法获取 {symbol} 行情数据\n\n错误信息：{str(e)}\n时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n这可能影响交易决策"
+            )
             raise
 
     async def fetch_funding_balance(self):
@@ -222,6 +240,14 @@ class ExchangeClient:
             return all_balances
         except Exception as e:
             self.logger.error(f"获取理财账户余额失败: {str(e)}")
+            
+            # 发送告警
+            self._send_alert(
+                alert_type="fetch_funding_balance_error",
+                title="⚠️ 理财账户余额获取失败",
+                content=f"💰 无法获取理财账户余额\n\n错误信息：{str(e)}\n时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n将使用缓存数据或返回空余额"
+            )
+            
             # 返回上一次的缓存（如果有）或空字典
             return self.funding_balance_cache.get('data', {})
 
@@ -241,6 +267,14 @@ class ExchangeClient:
             return balance
         except Exception as e:
             self.logger.error(f"获取现货余额失败: {str(e)}")
+            
+            # 发送告警
+            self._send_alert(
+                alert_type="fetch_balance_error",
+                title="⚠️ 现货账户余额获取失败",
+                content=f"💰 无法获取现货账户余额\n\n错误信息：{str(e)}\n时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n将返回空余额数据"
+            )
+            
             # 出错时不抛出异常，而是返回一个空的但结构完整的余额字典
             return {'free': {}, 'used': {}, 'total': {}}
     
@@ -256,6 +290,13 @@ class ExchangeClient:
             return await self.exchange.create_order(symbol, type, side, amount, price, params)
         except Exception as e:
             self.logger.error(f"下单失败: {str(e)}")
+            
+            # 发送告警（下单失败是非常重要的事件）
+            self._send_alert(
+                alert_type="create_order_error",
+                title="🚨 下单失败告警",
+                content=f"❌ 订单创建失败\n\n交易对：{symbol}\n类型：{type}\n方向：{side}\n数量：{amount}\n价格：{price}\n\n错误信息：{str(e)}\n时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            )
             raise
 
     async def create_market_order(
@@ -279,15 +320,24 @@ class ExchangeClient:
             'recvWindow': 5000
         })
 
-        order = await self.exchange.create_order(
-            symbol=symbol,
-            type='market',
-            side=side.lower(),   # ccxt 规范小写
-            amount=amount,
-            price=None,          # 市价单 price 必须是 None
-            params=params
-        )
-        return order
+        try:
+            order = await self.exchange.create_order(
+                symbol=symbol,
+                type='market',
+                side=side.lower(),   # ccxt 规范小写
+                amount=amount,
+                price=None,          # 市价单 price 必须是 None
+                params=params
+            )
+            return order
+        except Exception as e:
+            # 发送告警（市价单下单失败）
+            self._send_alert(
+                alert_type="create_market_order_error",
+                title="🚨 市价单下单失败",
+                content=f"❌ 市价单创建失败\n\n交易对：{symbol}\n方向：{side}\n数量：{amount}\n\n错误信息：{str(e)}\n时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            )
+            raise
 
 
     async def fetch_order(self, order_id, symbol, params=None):
@@ -303,11 +353,20 @@ class ExchangeClient:
     
     async def cancel_order(self, order_id, symbol, params=None):
         """取消指定订单"""
-        if params is None:
-            params = {}
-        params['timestamp'] = int(time.time() * 1000 + self.time_diff)
-        params['recvWindow'] = 5000
-        return await self.exchange.cancel_order(order_id, symbol, params)
+        try:
+            if params is None:
+                params = {}
+            params['timestamp'] = int(time.time() * 1000 + self.time_diff)
+            params['recvWindow'] = 5000
+            return await self.exchange.cancel_order(order_id, symbol, params)
+        except Exception as e:
+            # 发送告警（取消订单失败可能影响风控）
+            self._send_alert(
+                alert_type="cancel_order_error",
+                title="⚠️ 取消订单失败",
+                content=f"❌ 无法取消订单\n\n订单ID：{order_id}\n交易对：{symbol}\n\n错误信息：{str(e)}\n时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n请手动检查订单状态"
+            )
+            raise
     
     async def close(self):
         """关闭交易所连接"""
@@ -329,6 +388,13 @@ class ExchangeClient:
             self.logger.debug(f"时间同步完成 | 新时差: {self.time_diff}ms")
         except Exception as e:
             self.logger.error(f"周期性时间同步失败: {str(e)}")
+            
+            # 发送告警（时间同步失败可能导致订单被拒绝）
+            self._send_alert(
+                alert_type="sync_time_error",
+                title="⚠️ 时间同步失败",
+                content=f"❌ 无法同步交易所服务器时间\n\n错误信息：{str(e)}\n时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n这可能导致订单被拒绝（-1021错误）"
+            )
 
     async def fetch_order_book(self, symbol, limit=5):
         """获取订单簿数据"""
@@ -389,6 +455,13 @@ class ExchangeClient:
             return result
         except Exception as e:
             self.logger.error(f"赎回失败: {str(e)}")
+            
+            # 发送告警（理财操作失败）
+            self._send_alert(
+                alert_type="transfer_to_spot_error",
+                title="⚠️ 理财赎回失败",
+                content=f"❌ 从理财赎回到现货失败\n\n资产：{asset}\n数量：{formatted_amount}\n\n错误信息：{str(e)}\n时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            )
             raise
 
     async def transfer_to_savings(self, asset, amount):
@@ -417,6 +490,13 @@ class ExchangeClient:
             return result
         except Exception as e:
             self.logger.error(f"申购失败: {str(e)}")
+            
+            # 发送告警（理财操作失败）
+            self._send_alert(
+                alert_type="transfer_to_savings_error",
+                title="⚠️ 理财申购失败",
+                content=f"❌ 从现货申购理财失败\n\n资产：{asset}\n数量：{formatted_amount}\n\n错误信息：{str(e)}\n时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            )
             raise
 
     async def fetch_my_trades(self, symbol, limit=10):
@@ -507,6 +587,14 @@ class ExchangeClient:
 
         except Exception as e:
             self.logger.error(f"计算全账户总资产价值失败: {e}", exc_info=True)
+            
+            # 发送告警（资产计算失败影响风控决策）
+            self._send_alert(
+                alert_type="calculate_total_value_error",
+                title="⚠️ 资产价值计算失败",
+                content=f"❌ 无法计算账户总资产价值\n\n错误信息：{str(e)}\n时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n将使用缓存数据，可能影响风控决策"
+            )
+            
             return self.total_value_cache.get('data', 0.0)
 
     async def start_periodic_time_sync(self, interval_seconds: int = 3600):
@@ -546,3 +634,45 @@ class ExchangeClient:
                 pass  # 任务被取消是正常现象
             self.logger.info("周期性时间同步任务已停止。")
         self.time_sync_task = None
+
+    def _send_alert(self, alert_type: str, title: str, content: str):
+        """
+        发送告警消息，带有去重机制避免短时间内重复告警
+        
+        Args:
+            alert_type: 告警类型，用于去重
+            title: 告警标题
+            content: 告警内容
+        """
+        try:
+            current_time = time.time()
+            
+            # 检查是否在缓存时间内已发送过相同类型的告警
+            if alert_type in self.alert_cache:
+                last_sent_time = self.alert_cache[alert_type]
+                if current_time - last_sent_time < self.alert_cache_ttl:
+                    self.logger.debug(f"告警 {alert_type} 在缓存期内，跳过发送")
+                    return
+            
+            # 发送告警
+            send_pushplus_message(content, title)
+            
+            # 更新缓存
+            self.alert_cache[alert_type] = current_time
+            
+        except Exception as e:
+            self.logger.error(f"发送告警失败: {str(e)}")
+
+    def test_alert_system(self):
+        """测试告警系统是否正常工作"""
+        try:
+            self._send_alert(
+                alert_type="system_test",
+                title="🧪 告警系统测试",
+                content=f"✅ 告警系统正常工作\n\n测试时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n如果您收到此消息，说明告警功能已正确配置。"
+            )
+            self.logger.info("告警系统测试消息已发送")
+            return True
+        except Exception as e:
+            self.logger.error(f"告警系统测试失败: {str(e)}")
+            return False
