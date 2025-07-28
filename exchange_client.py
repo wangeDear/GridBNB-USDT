@@ -663,16 +663,37 @@ class ExchangeClient:
         except Exception as e:
             self.logger.error(f"发送告警失败: {str(e)}")
 
-    def test_alert_system(self):
-        """测试告警系统是否正常工作"""
+    async def exchange_info(self):
+        """获取交易信息"""
         try:
-            self._send_alert(
-                alert_type="system_test",
-                title="🧪 告警系统测试",
-                content=f"✅ 告警系统正常工作\n\n测试时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n如果您收到此消息，说明告警功能已正确配置。"
-            )
-            self.logger.info("告警系统测试消息已发送")
+            exchangeinfo = await self.exchange.public_get_exchangeinfo(params={'symbol': 'BTCUSDT'})
+            self.logger.info(f"交易所信息获取成功: {exchangeinfo}")
             return True
         except Exception as e:
             self.logger.error(f"告警系统测试失败: {str(e)}")
             return False
+
+if __name__ == "__main__":
+    """测试获取交易所信息"""
+    async def main():
+        client = None
+        try:
+            client = ExchangeClient()
+            # 先加载市场数据
+            await client.load_markets()
+            # 调用异步方法需要使用 await
+            exchange_info = await client.exchange_info()
+            if exchange_info:
+                client.logger.info("交易所信息获取成功")
+            else:
+                client.logger.error("交易所信息获取失败")
+        except Exception as e:
+            logging.error(f"测试获取交易所信息失败: {str(e)}")
+        finally:
+            # 确保关闭客户端连接
+            if client:
+                await client.close()
+
+    # 运行异步主函数
+    import asyncio
+    asyncio.run(main())
