@@ -400,15 +400,15 @@ class GridTrader:
         current_price = self.current_price
         initial_lower_band = self._get_lower_band()
         
-        # 检查是否在冷却期内（防止频繁触发）
+        # 检查是否在冷却期内（防止频繁触发）- 优化：缩短冷却期
         current_time = time.time()
         if hasattr(self, 'last_buy_signal_time'):
-            cooldown_period = 300  # 5分钟冷却期
+            cooldown_period = 120  # 2分钟冷却期（从5分钟缩短到2分钟）
             if current_time - self.last_buy_signal_time < cooldown_period:
                 return False
         
-        # 更激进的触发策略：提前触发信号
-        aggressive_trigger = initial_lower_band * 1.002  # 在下轨上方0.2%就开始监测
+        # 更激进的触发策略：提前触发信号 - 优化：更早进入监测状态
+        aggressive_trigger = initial_lower_band * 1.005  # 在下轨上方0.5%就开始监测（从0.2%提高到0.5%）
 
         if current_price <= aggressive_trigger:
             # --- 优化后的监测逻辑 ---
@@ -433,9 +433,9 @@ class GridTrader:
                     f"距离触发: {distance_to_trigger:.3f}%"
                 )
 
-            # 使用更保守的触发条件：至少1%的反弹才触发
+            # 使用更激进的触发条件：降低反弹要求 - 优化：更容易触发买入
             base_threshold = FLIP_THRESHOLD(self.grid_size)
-            dynamic_threshold = max(base_threshold * 1.5, 0.01)  # 至少1%的反弹
+            dynamic_threshold = max(base_threshold * 0.8, 0.003)  # 只需0.3%的反弹即可触发（从1%降低到0.3%）
             
             if self.lowest and current_price >= self.lowest * (1 + dynamic_threshold):
                 # 记录触发时间，防止频繁触发
@@ -460,15 +460,15 @@ class GridTrader:
         current_price = self.current_price
         initial_upper_band = self._get_upper_band()
         
-        # 检查是否在冷却期内（防止频繁触发）
+        # 检查是否在冷却期内（防止频繁触发）- 优化：缩短冷却期
         current_time = time.time()
         if hasattr(self, 'last_sell_signal_time'):
-            cooldown_period = 300  # 5分钟冷却期
+            cooldown_period = 120  # 2分钟冷却期（从5分钟缩短到2分钟）
             if current_time - self.last_sell_signal_time < cooldown_period:
                 return False
         
-        # 更激进的触发策略：提前触发信号
-        aggressive_trigger = initial_upper_band * 0.998  # 在上轨下方0.2%就开始监测
+        # 更激进的触发策略：提前触发信号 - 优化：更早进入监测状态
+        aggressive_trigger = initial_upper_band * 0.995  # 在上轨下方0.5%就开始监测（从0.2%提高到0.5%）
 
         if current_price >= aggressive_trigger:
             # --- 优化后的监测逻辑 ---
@@ -496,9 +496,9 @@ class GridTrader:
                     f"距离触发: {distance_to_trigger:.3f}%"
                 )
 
-            # 使用更保守的触发条件：至少1%的回撤才触发
+            # 使用更激进的触发条件：降低回撤要求 - 优化：更容易触发卖出
             base_threshold = FLIP_THRESHOLD(self.grid_size)
-            dynamic_threshold = max(base_threshold * 1.5, 0.01)  # 至少1%的回撤
+            dynamic_threshold = max(base_threshold * 0.8, 0.003)  # 只需0.3%的回撤即可触发（从1%降低到0.3%）
             
             if self.highest and current_price <= self.highest * (1 - dynamic_threshold):
                 # 记录触发时间，防止频繁触发
@@ -604,9 +604,9 @@ class GridTrader:
         consecutive_errors = 0
         max_consecutive_errors = 5
         
-        # 更激进的循环间隔设置
-        base_sleep_time = 2  # 基础休眠时间从5秒减少到2秒
-        monitoring_sleep_time = 1  # 监测期间更短的休眠时间
+        # 更激进的循环间隔设置 - 优化：进一步提高响应速度
+        base_sleep_time = 1  # 基础休眠时间进一步缩短到1秒
+        monitoring_sleep_time = 0.5  # 监测期间更短的休眠时间（0.5秒）
 
         while True:
             try:
